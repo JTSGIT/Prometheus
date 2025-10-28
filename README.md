@@ -1,10 +1,10 @@
 ## Prometheus Analytics 🔥
 
-🚀 What It Is
+# 🚀 What It Is
 Prometheus is a real-time, AI-powered claim sniper. It watches BC’s expired mineral claims like a hawk, cross-references them against TSX listings, and auto-bids on the ones with merit—before the human scouts even log in.
 Think of it as a trading bot, but for rocks. Except the rocks can flip for 100x your stake cost.
 
-💎 Why It’s Lucrative
+# 💎 Why It’s Lucrative
 •  Stake cost: $1.75/ha in BC.
 •  Flip price: $10k–$100k/ha during booms.
 •  Your edge: You’re 30 seconds faster than the guy earning $100/hr to babysit a browser.
