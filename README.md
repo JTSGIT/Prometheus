@@ -1,6 +1,6 @@
 ## Prometheus Analytics 🔥
 
-# 🚀 What It Is
+## 🚀 What It Is
 Prometheus is a real-time, AI-powered claim sniper. It watches BC’s expired mineral claims like a hawk, cross-references them against TSX listings, and auto-bids on the ones with merit—before the human scouts even log in.
 Think of it as a trading bot, but for rocks. Except the rocks can flip for 100x your stake cost.
 
