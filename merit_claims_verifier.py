@@ -1,3 +1,24 @@
+"""
+Prometheus Analytics - Merit Claims Verifier
+
+Automated system to source, verify, and score "properties of merit" 
+(expired BC mineral claims from public mining companies) for real-time staking.
+
+Flow:
+1. Fetch live MTO data via WFS (GeoJSON, filter expired); cache locally.
+2. Filter recent expired claims (GOOD_TO_DATE < now, TERMINATION_DATE null).
+3. Verify availability on MTO via Safari automation (requires credentials in env vars).
+4. Confirm merit: Regex on OWNER_NAME, SEDAR+ for NI 43-101 disclosures.
+5. Score geodata merit (Haversine to MinCore).
+6. Output: merit_claims.csv with recommendations (recommend_stake yes/no if merit_score >50).
+
+Prerequisites:
+- Safari with Remote Automation enabled (Develop > Allow Remote Automation)
+- Environment variables: MTO_USERNAME, MTO_PASSWORD (or BCEID_USERNAME, BCEID_PASSWORD)
+- pip install requests beautifulsoup4 pandas numpy selenium
+
+Ethical note: Public data; FN consultations mandatory before staking (flag in output).
+"""
 
 import requests
 from bs4 import BeautifulSoup
@@ -7,26 +28,18 @@ import numpy as np
 import os
 import time
 import re
+import logging
+
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.safari.options import Options as SafariOptions
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
 
-# # Script Overview
-# Fully automated script to source, verify, and score "properties of merit" (expired BC mineral claims from public mining companies) for real-time staking.
-# Game theory: Nash equilibrium via live WFS fetch + Selenium login (fast, complete); minimax hedges blocks with local cache/regex.
-# Flow:
-# 1. Fetch live MTO data via WFS (GeoJSON, filter expired); cache locally.
-# 2. Filter recent expired claims (GOOD_TO_DATE < now, TERMINATION_DATE null).
-# 3. Verify availability on MTO (Selenium login with BCeID JSoby/Ophiuchus#6800, tenure search).
-# 4. Confirm merit: Regex on OWNER_NAME, SEDAR+ POST for NI 43-101 disclosures.
-# 5. Score geodata merit (Haversine to MinCore).
-# 6. Output: merit_claims.csv with recommendations (recommend_stake yes/no if merit_score >50).
-# Ethical note: Public data; FN consultations mandatory before staking (flag in output).
-# Risks: WFS rate limits, Selenium session expiry, SEDAR JS (fallbacks handle).
-# Prerequisites: Run locally with internet; MinCore CSV in path; install dependencies (pip install requests beautifulsoup4 pandas numpy selenium webdriver-manager).
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # ## Step 1: Fetch Live MTO Data
 # Use WFS for GeoJSON (daily updates). Cache to mta_tenures.csv; load if fails.
@@ -98,35 +111,62 @@ def filter_expired(df, days_back=90):
     return df_expired
 
 # ## Step 3: Verify Availability on MTO
-# Selenium login (JSoby/Ophiuchus#6800), search tenure for "expired".
+# Safari-based Selenium login, search tenure for "expired".
+# Credentials from environment variables: MTO_USERNAME, MTO_PASSWORD
 # Fallback: Assume available if fails.
-# Debug: Print HTML on selector failure.
-# Adjustments: Update URLs/selectors via browser inspect (MTO tenure search).
 def verify_availability_mto(df_expired):
+    """
+    Verify claim availability on MTO using Safari automation.
+    
+    Requires environment variables:
+    - MTO_USERNAME (or BCEID_USERNAME): BCeID username
+    - MTO_PASSWORD (or BCEID_PASSWORD): BCeID password
+    """
+    # Load credentials from environment
+    username = os.environ.get("MTO_USERNAME") or os.environ.get("BCEID_USERNAME")
+    password = os.environ.get("MTO_PASSWORD") or os.environ.get("BCEID_PASSWORD")
+    
+    if not username or not password:
+        logger.warning(
+            "MTO credentials not found in environment. "
+            "Set MTO_USERNAME and MTO_PASSWORD. Assuming availability for all claims."
+        )
+        df_expired['mto_status'] = 'assumed_available'
+        return df_expired
+    
     driver = None
     try:
-        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+        # Initialize Safari driver
+        options = SafariOptions()
+        driver = webdriver.Safari(options=options)
+        driver.implicitly_wait(10)
+        
         login_url = 'https://www.bceid.ca/clp/accountlogon.aspx?type=0&appurl=https%3A%2F%2Fwww.mtonline.gov.bc.ca%2Fmtov%2Fhome.do&servicecreds=MTOM&appname=MTO'
         driver.get(login_url)
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.NAME, 'txtUserId')))
-        driver.find_element(By.NAME, 'txtUserId').send_keys('JSoby')
-        driver.find_element(By.NAME, 'txtPassword').send_keys('Ophiuchus#6800')
+        
+        # Fill login form with credentials from environment
+        driver.find_element(By.NAME, 'txtUserId').send_keys(username)
+        driver.find_element(By.NAME, 'txtPassword').send_keys(password)
         driver.find_element(By.NAME, 'btnSubmit').click()
         WebDriverWait(driver, 10).until(EC.url_contains('mtonline'))
         if 'error' in driver.page_source.lower():
-            print("MTO login failed. Assuming availability.")
+            logger.warning("MTO login failed. Assuming availability.")
             df_expired['mto_status'] = 'assumed_available'
             return df_expired
         time.sleep(5)
     except Exception as e:
-        print(f"MTO login error: {e}. Assuming availability.")
+        logger.error(f"MTO login error: {e}. Assuming availability.")
         df_expired['mto_status'] = 'assumed_available'
         return df_expired
     finally:
         if driver:
             driver.quit()
 
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+    # Initialize Safari for tenure search
+    options = SafariOptions()
+    driver = webdriver.Safari(options=options)
+    driver.implicitly_wait(10)
     try:
         mto_search_url = 'https://www.mtonline.gov.bc.ca/mtov/tenureSearch.do'
         verified = []
@@ -142,7 +182,7 @@ def verify_availability_mto(df_expired):
                 soup = BeautifulSoup(driver.page_source, 'html.parser')
                 status_elem = soup.find('span', class_='status') or soup.find('td', string=re.compile('status', re.I))
                 if not status_elem:
-                    print(f"No status for {tenure_id}. HTML: {str(soup)[:500]}. Try class='tenure-status'.")
+                    logger.debug(f"No status for {tenure_id}. HTML: {str(soup)[:500]}. Try class='tenure-status'.")
                     status = 'unknown'
                 else:
                     status = status_elem.text.strip().lower()
@@ -150,11 +190,11 @@ def verify_availability_mto(df_expired):
                 verified.append(row.to_dict())
                 time.sleep(5)
             except Exception as e:
-                print(f"Search failed for {tenure_id}: {e}. Assuming available.")
+                logger.warning(f"Search failed for {tenure_id}: {e}. Assuming available.")
                 row['mto_status'] = 'assumed_available'
                 verified.append(row.to_dict())
         df_verified = pd.DataFrame(verified)
-        print(f"Verified {len(df_verified[df_verified['mto_status'].str.contains('available')])} available claims.")
+        logger.info(f"Verified {len(df_verified[df_verified['mto_status'].str.contains('available')])} available claims.")
         return df_verified
     finally:
         driver.quit()
