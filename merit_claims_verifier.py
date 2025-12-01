@@ -156,7 +156,11 @@ def verify_availability_mto(df_expired):
             return df_expired
         time.sleep(5)
     except Exception as e:
-        logger.error(f"MTO login error: {e}. Assuming availability.")
+        logger.error(
+            f"MTO login error: {e}. "
+            "Assuming availability for all claims - WARNING: this may result in false positives. "
+            "Verify claim status manually before staking."
+        )
         df_expired['mto_status'] = 'assumed_available'
         return df_expired
     finally:

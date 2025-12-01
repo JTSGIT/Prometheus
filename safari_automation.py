@@ -539,7 +539,7 @@ class SafariAutomation:
 
 class MTOAutomation(SafariAutomation):
     """
-    Specialized automation for BC Ministry of Transportation Online (MTO).
+    Specialized automation for BC Mineral Titles Online (MTO).
     
     Handles:
     - BCeID login flow
@@ -800,8 +800,8 @@ if __name__ == "__main__":
             if mto.login(username, password):
                 print("Login successful!")
                 
-                # Example: search for a tenure
-                # result = mto.search_tenure("123456")
+                # Example: search for a tenure (use clearly fake ID for testing)
+                # result = mto.search_tenure("TEST_EXAMPLE_ID")
                 # print(f"Tenure status: {result['status']}")
             else:
                 print("Login failed!")
